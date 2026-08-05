@@ -1,0 +1,6 @@
+<network>
+  <name>edns0-dmz</name>
+  <forward mode='bridge'/>
+  <bridge name='br-dmz'/>
+  <virtualport type='openvswitch'/>
+</network>

@@ -1,0 +1,57 @@
+---
+- name: Controle negativo - trafego legitimo NAO deve gerar alertas
+  hosts: localhost
+  vars:
+    solution: "suricata"
+    duration: 120
+    timestamp: "{{ ansible_date_time.epoch }}"
+
+  tasks:
+    - name: Limpar logs anteriores
+      delegate_to: fw-test
+      ansible.builtin.shell: |
+        sudo truncate -s 0 /var/log/suricata/eve.json 2>/dev/null || true
+      when: solution == 'suricata'
+      ignore_errors: yes
+
+    - name: Iniciar captura
+      delegate_to: traffic-monitor
+      ansible.builtin.shell: |
+        nohup tcpdump -i ens3 -w \
+          /home/researcher/pcaps/{{ solution }}_control_negative_{{ timestamp }}.pcap \
+          port 53 &
+      async: "{{ duration | int + 60 }}"
+      poll: 0
+
+    - name: Gerar apenas trafego DNS legitimo
+      delegate_to: victim-linux
+      ansible.builtin.shell: |
+        cd ~/edns0-lab/tools/ednstego && \
+        python3 traffic_gen.py \
+          --mode baseline \
+          --duration {{ duration }} \
+          --resolver 10.0.1.2 \
+          --domains-file data/tranco-top1000.txt \
+          --rate 10
+
+    - name: Verificar alertas (deve ser 0)
+      delegate_to: fw-test
+      ansible.builtin.shell: |
+        if [ -f /var/log/suricata/eve.json ]; then
+          grep -c '"event_type":"alert"' /var/log/suricata/eve.json || echo "0"
+        fi
+      register: alert_count
+      when: solution == 'suricata'
+      ignore_errors: yes
+
+    - name: Resultado controle negativo
+      ansible.builtin.debug:
+        msg: >
+          Controle negativo ({{ solution }}):
+          {% if alert_count is defined %}{{ alert_count.stdout }} alertas{% endif %}
+          - Se > 0, ha falsos positivos.
+
+    - name: Parar captura
+      delegate_to: traffic-monitor
+      ansible.builtin.shell: pkill -f tcpdump
+      ignore_errors: yes

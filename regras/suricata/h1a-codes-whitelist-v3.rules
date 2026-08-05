@@ -1,0 +1,75 @@
+# H1a v3 — Códigos EDNS fora da whitelist IANA
+#
+# Refinamento da v2 com âncora estrutural reforçada via
+# validação do CLASS field do OPT pseudo-RR.
+#
+# RFC 6891: o CLASS field do OPT pseudo-RR carrega o
+# udp_payload_size, valor entre 512 (mínimo histórico) e
+# 4096 (mais comum em produção, EDNS buffer max típico).
+# Validar este range adiciona âncora semântica ao content
+# match, reduzindo (mas não eliminando) match espúrio em
+# payload onde a sequência |00 29| aparece fora do OPT
+# pseudo-RR.
+#
+# Posições no OPT pseudo-RR a partir do match content "|00 29|"
+# (TYPE field, 2 bytes). Cursor após match fica logo após
+# o segundo byte do TYPE:
+#   offset +0..+1 = CLASS (udp_payload_size, 16-bit)  ← validado pela âncora
+#   offset +2..+5 = TTL (ext_rcode, version, Z/DO flags)
+#   offset +6..+7 = RDLENGTH
+#   offset +8..+9 = OPTION-CODE                       ← inspecionado pelos byte_test
+#   offset +10..+11 = OPTION-LENGTH
+#
+# Note: o spec original deste arquivo tinha offset 4 em
+# byte_test do OPTION-CODE, mas isso lê dentro do TTL field —
+# offset correto é 8 (igual à v2 que efetivamente detecta).
+# Mantemos offset 8 aqui para preservar paridade de TP com v2.
+#
+# LIMITAÇÃO REMANESCENTE DOCUMENTADA: mesmo com âncora CLASS
+# (validação 512..4096), se a sequência fortuita |00 29| aparece
+# em RDATA de outro RR ou em texto de EDE/TXT, e os bytes
+# subsequentes calham de respeitar a faixa de udp_payload_size
+# legítima, byte_test pode ainda passar — apenas
+# probabilisticamente menos comum.
+
+alert udp any any -> any 53 (msg:"EDNS0 option code outside IANA whitelist [v3 query]"; \
+    flow:to_server; \
+    content:"|00 29|"; \
+    byte_test:2,>=,512,0,relative,big; \
+    byte_test:2,<=,4096,0,relative,big; \
+    byte_test:2,!=,0,8,relative,big; \
+    byte_test:2,!=,3,8,relative,big; \
+    byte_test:2,!=,5,8,relative,big; \
+    byte_test:2,!=,6,8,relative,big; \
+    byte_test:2,!=,7,8,relative,big; \
+    byte_test:2,!=,8,8,relative,big; \
+    byte_test:2,!=,9,8,relative,big; \
+    byte_test:2,!=,10,8,relative,big; \
+    byte_test:2,!=,11,8,relative,big; \
+    byte_test:2,!=,12,8,relative,big; \
+    byte_test:2,!=,14,8,relative,big; \
+    byte_test:2,!=,15,8,relative,big; \
+    byte_test:2,!=,16,8,relative,big; \
+    sid:1000020; rev:1; \
+    metadata:hypothesis H1a, version v3, anchor CLASS_field_validated;)
+
+alert udp any 53 -> any any (msg:"EDNS0 option code outside IANA whitelist [v3 response]"; \
+    flow:from_server; \
+    content:"|00 29|"; \
+    byte_test:2,>=,512,0,relative,big; \
+    byte_test:2,<=,4096,0,relative,big; \
+    byte_test:2,!=,0,8,relative,big; \
+    byte_test:2,!=,3,8,relative,big; \
+    byte_test:2,!=,5,8,relative,big; \
+    byte_test:2,!=,6,8,relative,big; \
+    byte_test:2,!=,7,8,relative,big; \
+    byte_test:2,!=,8,8,relative,big; \
+    byte_test:2,!=,9,8,relative,big; \
+    byte_test:2,!=,10,8,relative,big; \
+    byte_test:2,!=,11,8,relative,big; \
+    byte_test:2,!=,12,8,relative,big; \
+    byte_test:2,!=,14,8,relative,big; \
+    byte_test:2,!=,15,8,relative,big; \
+    byte_test:2,!=,16,8,relative,big; \
+    sid:1000021; rev:1; \
+    metadata:hypothesis H1a, version v3, anchor CLASS_field_validated;)

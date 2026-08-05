@@ -1,0 +1,70 @@
+# H1a — Códigos EDNS fora da whitelist IANA (versão Suricata)
+#
+# Análoga à h1a-codes-whitelist.zeek mas implementada via byte_test
+# sobre payload UDP/53. Suricata não tem keyword nativo para
+# enumerar options EDNS, então a regra usa content match no header
+# OPT (type 0x0029) seguido de byte_test sobre option_code.
+#
+# Whitelist: {0, 3, 5, 6, 7, 8, 9, 10, 11, 12, 14, 15, 16}
+# (mesma da H1a Zeek). Code 13 deliberadamente fora — usado por T5.
+#
+# LIMITAÇÕES DESTA IMPLEMENTAÇÃO:
+# 1. Detecta a PRIMEIRA option do OPT pseudo-RR. Múltiplas options
+#    no mesmo OPT não são todas inspecionadas — limitação estrutural
+#    de byte_test em rule-language Suricata.
+# 2. Não dedupe por sessão (Suricata flowbits/xbits poderiam mas
+#    semântica é diferente da do Zeek $identifier).
+# 3. Codes 13, 17, 18, ... ≥65000 disparam a mesma regra — paper
+#    documenta que regra detecta "qualquer code fora da whitelist"
+#    sem distinção fina.
+
+# Anchor: NAME(0x00 root) + TYPE(0x00 0x29 = OPT). Cursor após match
+# fica no início do CLASS field do OPT pseudo-RR.
+# Layout após content match:
+#   offset 0..1  CLASS (udp_payload_size)
+#   offset 2..5  TTL (ext_rcode/version/flags)
+#   offset 6..7  RDLENGTH
+#   offset 8..9  OPTION-CODE  ← inspecionado pelos byte_test
+#   offset 10..11 OPTION-LENGTH
+
+# Query: cliente → resolver
+alert udp any any -> any 53 (msg:"EDNS0 option code outside IANA whitelist [query]"; \
+    flow:to_server; \
+    content:"|00 00 29|"; \
+    byte_test:2,!=,0,8,relative,big; \
+    byte_test:2,!=,3,8,relative,big; \
+    byte_test:2,!=,5,8,relative,big; \
+    byte_test:2,!=,6,8,relative,big; \
+    byte_test:2,!=,7,8,relative,big; \
+    byte_test:2,!=,8,8,relative,big; \
+    byte_test:2,!=,9,8,relative,big; \
+    byte_test:2,!=,10,8,relative,big; \
+    byte_test:2,!=,11,8,relative,big; \
+    byte_test:2,!=,12,8,relative,big; \
+    byte_test:2,!=,14,8,relative,big; \
+    byte_test:2,!=,15,8,relative,big; \
+    byte_test:2,!=,16,8,relative,big; \
+    sid:1000010; rev:2; \
+    metadata:hypothesis H1a, technique T1, technique T5, technique T6, \
+             portability_demonstration zeek_to_suricata;)
+
+# Response: resolver → cliente
+alert udp any 53 -> any any (msg:"EDNS0 option code outside IANA whitelist [response]"; \
+    flow:from_server; \
+    content:"|00 00 29|"; \
+    byte_test:2,!=,0,8,relative,big; \
+    byte_test:2,!=,3,8,relative,big; \
+    byte_test:2,!=,5,8,relative,big; \
+    byte_test:2,!=,6,8,relative,big; \
+    byte_test:2,!=,7,8,relative,big; \
+    byte_test:2,!=,8,8,relative,big; \
+    byte_test:2,!=,9,8,relative,big; \
+    byte_test:2,!=,10,8,relative,big; \
+    byte_test:2,!=,11,8,relative,big; \
+    byte_test:2,!=,12,8,relative,big; \
+    byte_test:2,!=,14,8,relative,big; \
+    byte_test:2,!=,15,8,relative,big; \
+    byte_test:2,!=,16,8,relative,big; \
+    sid:1000011; rev:2; \
+    metadata:hypothesis H1a, technique T1, technique T5, technique T6, \
+             portability_demonstration zeek_to_suricata;)

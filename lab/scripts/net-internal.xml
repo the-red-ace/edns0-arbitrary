@@ -1,0 +1,6 @@
+<network>
+  <name>edns0-internal</name>
+  <forward mode='bridge'/>
+  <bridge name='br-internal'/>
+  <virtualport type='openvswitch'/>
+</network>
