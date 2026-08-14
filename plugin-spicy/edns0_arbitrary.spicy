@@ -1,0 +1,116 @@
+# Plugin Spicy para Zeek 8.1.2 — enumera opcoes EDNS0 de qualquer
+# codigo (12 Padding RFC 7830, 13 CHAIN RFC 7901, 65001+ experimentais),
+# contornando o BIF nativo do Zeek 8.1.x que so expoe codes 8/10/11.
+#
+# Coexiste com o parser DNS core (sem `replaces` no .evt). is_query
+# vem do bit QR do header DNS, propagado por parametros de unit
+# ate EDNSOption.
+
+module EDNS0Arbitrary;
+
+import spicy;
+
+# ---------------------------------------------------------------
+# DNS name skip-only (RFC 1035 com compressao por ponteiro).
+# Nao resolve nomes — so alinha o cursor para o proximo campo do RR.
+#   length == 0x00              -> fim do name (1 byte)
+#   (length & 0xC0) == 0xC0     -> ponteiro de 2 bytes; encerra
+#   senao                       -> label de `length` bytes; continua
+# Bits reservados (0x40, 0x80) ficam sem match de if; Spicy aborta
+# a unit e o parser core do Zeek segue normal — aceitavel para
+# trafego nao-adversarial.
+# ---------------------------------------------------------------
+type DNSName = unit {
+    : Label[] &until=($$.is_terminal);
+};
+
+type Label = unit {
+    var is_terminal: bool = False;
+    length: uint8;
+
+    : skip bytes &size=self.length
+        if ( self.length > 0 && (self.length & 0xC0) == 0x00 );
+
+    : skip uint8
+        if ( (self.length & 0xC0) == 0xC0 );
+
+    on %done {
+        self.is_terminal =
+            (self.length == 0) ||
+            ((self.length & 0xC0) == 0xC0);
+    }
+};
+
+# ---------------------------------------------------------------
+# Question: QNAME + QTYPE + QCLASS (skip-only).
+# ---------------------------------------------------------------
+type Question = unit {
+    %byte-order = spicy::ByteOrder::Big;
+    : DNSName;
+    qtype:  uint16;
+    qclass: uint16;
+};
+
+# ---------------------------------------------------------------
+# Resource record. Para OPT (rtype=41) decodifica RDATA como
+# sequencia de opcoes; demais tipos consomem rdata opaco.
+# ---------------------------------------------------------------
+type ResourceRecord = unit(is_query: bool) {
+    %byte-order = spicy::ByteOrder::Big;
+    : DNSName;
+    rtype:    uint16;
+    rclass:   uint16;
+    ttl:      uint32;
+    rdlength: uint16;
+    switch (self.rtype) {
+        41 -> opt: OPTRDATA(is_query);
+        *  -> raw: bytes &eod;
+    } &size=self.rdlength;
+};
+
+# ---------------------------------------------------------------
+# RDATA do OPT pseudo-RR (RFC 6891). &eod respeita a janela
+# &size=rdlength herdada do ResourceRecord.
+# ---------------------------------------------------------------
+type OPTRDATA = unit(is_query: bool) {
+    : EDNSOption(is_query)[] &eod;
+};
+
+# ---------------------------------------------------------------
+# Opcao EDNS individual. Hook %done (implicito via .evt) dispara
+# 1 evento Zeek por opcao parseada.
+# ---------------------------------------------------------------
+type EDNSOption = unit(is_query: bool) {
+    %byte-order = spicy::ByteOrder::Big;
+    var is_query: bool = is_query;
+    option_code:   uint16;
+    option_length: uint16;
+    option_data:   bytes &size=self.option_length;
+};
+
+# ---------------------------------------------------------------
+# Entry point do analyzer (public; resto e interno).
+# ---------------------------------------------------------------
+public type Message = unit {
+    %byte-order = spicy::ByteOrder::Big;
+
+    var is_query: bool = False;
+
+    id:      uint16;
+    flags:   uint16;
+    qdcount: uint16;
+    ancount: uint16;
+    nscount: uint16;
+    arcount: uint16;
+
+    # QR = bit 15 do flags. QR=0 -> query, QR=1 -> response.
+    # $$ e o valor recem-parseado garantido valido neste hook.
+    on flags {
+        self.is_query = ($$ & 0x8000) == 0;
+    }
+
+    questions:   Question[self.qdcount];
+    answers:     ResourceRecord(self.is_query)[self.ancount];
+    authorities: ResourceRecord(self.is_query)[self.nscount];
+    additionals: ResourceRecord(self.is_query)[self.arcount];
+};

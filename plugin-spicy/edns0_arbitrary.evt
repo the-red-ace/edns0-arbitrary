@@ -1,0 +1,18 @@
+# Mapeamento Spicy<->Zeek do plugin edns0-arbitrary.
+# Sem `replaces` — coexiste com o parser DNS core (que continua
+# emitindo dns_request/dns_reply/dns_EDNS_* normais).
+
+protocol analyzer spicy::EDNS0_Arbitrary over UDP:
+    parse with EDNS0Arbitrary::Message,
+    port 53/udp;
+
+# Dispara 1 vez por opcao parseada dentro de qualquer pseudo-RR OPT.
+# self.is_query e cascateado de Message -> ResourceRecord -> OPTRDATA
+# -> EDNSOption via parametros de unit.
+on EDNS0Arbitrary::EDNSOption -> event edns0_arbitrary_opt(
+    $conn,
+    self.is_query,
+    self.option_code,
+    self.option_length,
+    self.option_data
+);
