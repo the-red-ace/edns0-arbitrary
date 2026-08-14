@@ -40,6 +40,13 @@ event edns0_arbitrary_opt(c: connection, is_query: bool, code: count,
     if ( code != 10 )
         return;
 
+    # Processar apenas queries: respostas carregam server cookie que
+    # varia por natureza, inflando artificialmente a unicidade de hash
+    # e gerando falsos-positivos em clientes legitimos (simetrico ao
+    # filtro is_query ja presente no H4).
+    if ( ! is_query )
+        return;
+
     if ( c$uid !in cookie_stats_by_conn )
         cookie_stats_by_conn[c$uid] = CookieStats();
 
