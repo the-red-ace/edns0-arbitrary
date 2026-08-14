@@ -57,6 +57,7 @@ type Question = unit {
 # ---------------------------------------------------------------
 type ResourceRecord = unit(is_query: bool) {
     %byte-order = spicy::ByteOrder::Big;
+    var is_query: bool = is_query;
     : DNSName;
     rtype:    uint16;
     rclass:   uint16;
@@ -73,7 +74,7 @@ type ResourceRecord = unit(is_query: bool) {
 # &size=rdlength herdada do ResourceRecord.
 # ---------------------------------------------------------------
 type OPTRDATA = unit(is_query: bool) {
-    : EDNSOption(is_query)[] &eod;
+    options: EDNSOption(is_query)[] &eod;
 };
 
 # ---------------------------------------------------------------
