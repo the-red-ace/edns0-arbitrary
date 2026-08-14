@@ -16,3 +16,19 @@ on EDNS0Arbitrary::EDNSOption -> event edns0_arbitrary_opt(
     self.option_length,
     self.option_data
 );
+
+
+# Dispara 1 vez por pseudo-RR OPT (rtype==41), expondo os campos do
+# header do OPT que a heuristica H4 usa. rclass carrega o
+# udp_payload_size (RFC 6891); ttl decompoe em extended_rcode (byte
+# alto), version (byte seguinte) e flags (16 bits baixos). opt_count
+# e o numero de opcoes enumeradas dentro deste OPT.
+on EDNS0Arbitrary::ResourceRecord if (self.rtype == 41) -> event edns0_opt_record(
+    $conn,
+    self.is_query,
+    self.rclass,
+    (self.ttl >> 24) & 0xFF,
+    (self.ttl >> 16) & 0xFF,
+    self.ttl & 0xFFFF,
+    |self.opt.options|
+);
