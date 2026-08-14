@@ -42,22 +42,22 @@ Os selos considerados são: **Disponível**, **Funcional**, **Sustentável** e *
 | BIND9 | 9.18.x |
 | Open vSwitch | 3.x |
 
-O laboratório usa cinco VMs numa bridge OVS isolada, sem rota para a Internet. **A geração
-de tráfego (agente + C2) foi desenhada para esse ambiente multi-VM.** Para reproduzir os
-resultados de detecção numa única máquina, o caminho recomendado é rodar o Zeek e o
-Suricata diretamente sobre os PCAPs (os das variantes estão nos Releases; os canônicos
-T1–T6 podem ser regenerados no laboratório) — isso valida as mesmas reivindicações sem
-depender da topologia completa. Os playbooks em `lab/` documentam o ambiente para quem
-quiser replicá-lo.
+O laboratório usa cinco VMs numa bridge OVS isolada. **A geração de tráfego (agente + C2)
+foi desenhada para esse ambiente multi-VM.** Para reproduzir os resultados de detecção
+numa única máquina, rode o Zeek e o Suricata diretamente sobre os PCAPs dos Releases
+(canônicos T1–T6 e variantes T3/T4) — isso valida todas as reivindicações sem depender da
+topologia. Os playbooks em `lab/` documentam o ambiente para quem quiser replicá-lo.
 
 # Dependências
 
-Python, em ambiente virtual (o Ubuntu 24.04 bloqueia `pip` global por PEP 668):
+Python, em ambiente virtual (o Ubuntu 24.04 bloqueia `pip` global por PEP 668). O pacote
+`python3-venv` é pré-requisito para criar o ambiente:
 
 ```
+sudo apt install python3-venv
 python3 -m venv .venv
 source .venv/bin/activate
-pip install dnspython scapy
+pip install dnspython scapy pyshark
 ```
 
 Como alternativa via apt, sem venv: `sudo apt install python3-dnspython python3-scapy`.
@@ -114,10 +114,16 @@ zeek -C -r /tmp/smoke.pcap edns0_arbitrary.hlto edns0_arbitrary.zeek
 cat edns0_arbitrary.log
 ```
 
-Saída esperada: uma linha com `opt_code=12`, `opt_length=1` e
+Saída esperada: entre as opções enumeradas no `edns0_arbitrary.log`, uma linha com
+`opt_code=12`, `opt_length=1` e
 `opt_data_sha256=6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d`
-(o SHA-256 do byte 0x00). O `dns.log` é gerado em paralelo pelo parser nativo, confirmando
-a coexistência sem `replaces`.
+(o SHA-256 do byte 0x00). O `dig` também emite uma opção Cookie (código 10) por padrão e
+retenta a consulta, então o log terá mais de uma linha; a que importa para o teste é a do
+código 12. O `dns.log` é gerado em paralelo pelo parser nativo, confirmando a coexistência
+sem `replaces`.
+
+Se não houver resolvedor local escutando na porta 53, o `dig` retorna `connection refused`,
+mas os pacotes de consulta ainda são emitidos e capturados — o teste funciona mesmo assim.
 
 # Experimentos
 
@@ -148,7 +154,7 @@ Zeek stock não detecta nenhuma das seis técnicas.
 ```bash
 for t in T1 T2 T3 T4 T5 T6; do
     zeek -C -r canonical-T1-T6/$t-internal.pcap local
-    echo "$t: $(grep -c . notice.log 2>/dev/null || echo 0) alertas"; rm -f notice.log
+    echo "$t: $(grep -vc '^#' notice.log 2>/dev/null || echo 0) alertas"; rm -f notice.log
 done
 # Esperado: 0 alertas em todas as técnicas
 ```
@@ -158,7 +164,7 @@ done
 ```bash
 # Com o plugin: o código 12 (T2) aparece
 zeek -C -r canonical-T1-T6/T2-internal.pcap plugin-spicy/edns0_arbitrary.hlto plugin-spicy/edns0_arbitrary.zeek
-grep -c . edns0_arbitrary.log   # opções enumeradas
+grep -vc '^#' edns0_arbitrary.log   # opções enumeradas (exclui cabeçalhos do log Zeek)
 
 # Sem o plugin: o mesmo PCAP não mostra o código 12
 zeek -C -r canonical-T1-T6/T2-internal.pcap
@@ -175,7 +181,7 @@ for t in T1 T2 T3 T4 T5 T6; do
     zeek -C -r canonical-T1-T6/$t-internal.pcap \
         plugin-spicy/edns0_arbitrary.hlto plugin-spicy/edns0_arbitrary.zeek \
         regras/zeek/edns0-detection.zeek
-    echo "$t: $(grep -c . notice.log 2>/dev/null || echo 0) notices"; rm -f notice.log
+    echo "$t: $(grep -vc '^#' notice.log 2>/dev/null || echo 0) notices"; rm -f notice.log
 done
 # T1,T5 -> H1a; T2 -> H1b; T3,T6 -> H2; T4 -> H4
 
@@ -198,11 +204,14 @@ done
 ## Reivindicação #4 — Teto de revocação do Suricata (Tabela 6 do artigo)
 
 ```bash
+mkdir -p /tmp/suri
 for t in T1 T2 T3 T4 T5 T6; do
     suricata -r canonical-T1-T6/$t-internal.pcap -S regras/suricata/h1a-codes-whitelist-v3.rules -l /tmp/suri/
-    echo "$t: $(wc -l < /tmp/suri/fast.log) alertas"; rm -f /tmp/suri/fast.log
+    # detecção binária por técnica: 1 se houve qualquer alerta, 0 caso contrário
+    n=$(wc -l < /tmp/suri/fast.log); echo "$t: $([ "$n" -gt 0 ] && echo 1 || echo 0)"
+    rm -f /tmp/suri/fast.log
 done
-# Esperado: T1=1, T5=1, demais=0 (T6 perde o segundo código, limitação do artigo)
+# Esperado: T1=1, T5=1, demais=0 (T6 tem código 65001 mas escapa, limitação do artigo)
 ```
 
 # LICENSE
