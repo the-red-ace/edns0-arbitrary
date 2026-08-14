@@ -16,6 +16,16 @@ global edns0_arbitrary_opt: event(c: connection,
                                   length: count,
                                   data: string);
 
+# Evento por pseudo-RR OPT (usado pela heuristica H4). Exposto pelo
+# mapeamento .evt a partir da unit ResourceRecord quando rtype==41.
+global edns0_opt_record: event(c: connection,
+                               is_query: bool,
+                               udp_payload_size: count,
+                               extended_rcode: count,
+                               version: count,
+                               flags: count,
+                               opt_count: count);
+
 module EDNS0Arbitrary;
 
 export {
